@@ -1,12 +1,12 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from pypdf import PdfReader
 from openai import AzureOpenAI
 
-# Primeira Versão
-
+# Configuração da Página
 st.set_page_config(
-    page_title="Suporte de TI - Chatbot RAG",
+    page_title="Suporte de TI - Chatbot RAG & Analytics",
     page_icon="🛠️",
     layout="wide"
 )
@@ -21,28 +21,37 @@ if "messages" not in st.session_state:
 if "conteudo_base" not in st.session_state:
     st.session_state.conteudo_base = ""
 
+if "df_dados" not in st.session_state:
+    st.session_state.df_dados = None
 
-def extrair_texto_arquivo(uploaded_file) -> str:
-    """Extrai texto dos formatos .txt, .csv ou .pdf."""
+
+def extrair_texto_e_dados(uploaded_file):
+    """Extrai texto e tenta carregar DataFrame se for CSV ou texto estruturado."""
     nome = uploaded_file.name.lower()
+    df_result = None
+    texto_result = ""
     try:
         if nome.endswith(".txt"):
-            return uploaded_file.read().decode("utf-8", errors="ignore")
+            texto_result = uploaded_file.read().decode("utf-8", errors="ignore")
+            # Tenta ler como tabela se houver separadores tabulados ou ponto e vírgula
+            uploaded_file.seek(0)
+            try:
+                df_result = pd.read_csv(uploaded_file, sep=None, engine="python")
+            except Exception:
+                pass
         elif nome.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-            return df.to_string(index=False)
+            df_result = pd.read_csv(uploaded_file, sep=None, engine="python")
+            texto_result = df_result.to_string(index=False)
         elif nome.endswith(".pdf"):
             leitor = PdfReader(uploaded_file)
-            texto = ""
             for pagina in leitor.pages:
-                texto_pagina = pagina.extract_text()
-                if texto_pagina:
-                    texto += texto_pagina + "\n"
-            return texto
+                t_pag = pagina.extract_text()
+                if t_pag:
+                    texto_result += t_pag + "\n"
     except Exception as e:
         st.sidebar.error(f"Erro ao processar o arquivo: {e}")
-        return ""
-    return ""
+    
+    return texto_result, df_result
 
 
 # ==========================================
@@ -52,12 +61,10 @@ with st.sidebar:
     st.title("⚙️ Configurações da IA")
     st.caption("Microsoft Foundry / Azure OpenAI Service")
 
-    # Campos de Conexão (Persistem entre chats via session_state)
     endpoint = st.text_input(
         "Endpoint Azure:",
         value=st.session_state.get("saved_endpoint", ""),
         placeholder="https://seu-recurso.openai.azure.com/",
-        type="default"
     )
     api_key = st.text_input(
         "API Key:",
@@ -73,41 +80,38 @@ with st.sidebar:
 
     st.divider()
 
-    # Persona do Assistente
     persona_padrao = (
         "Você é um Especialista de Suporte Técnico de TI nível 2/3. "
         "Seu tom é profissional, analítico, objetivo e didático. "
         "Utilize a base de conhecimento anexada para resolver os chamados e incidentes "
-        "com passos estruturados de troubleshooting. Se a informação não estiver na base nem for "
-        "resolvível com boas práticas de TI, avise claramente ao solicitante."
+        "com passos estruturados de troubleshooting."
     )
     persona = st.text_area(
         "Definição da Persona (Prompt do Sistema):",
         value=persona_padrao,
-        height=140
+        height=120
     )
 
-    # Upload da Base de Conhecimento (RAG)
     st.divider()
     arquivo_rag = st.file_uploader(
         "Base de Conhecimento (RAG):",
         type=["pdf", "txt", "csv"],
-        help="Envie documentações de procedimentos operacionais, manuais ou FAQs."
+        help="Envie documentações, CSVs de problemas/valores, etc."
     )
 
-    # Processamento do arquivo
     if arquivo_rag is not None:
-        st.session_state.conteudo_base = extrair_texto_arquivo(arquivo_rag)
+        texto_extraido, df_extraido = extrair_texto_e_dados(arquivo_rag)
+        st.session_state.conteudo_base = texto_extraido
+        st.session_state.df_dados = df_extraido
         st.success(f"Base carregada: {arquivo_rag.name}")
     else:
         st.session_state.conteudo_base = ""
+        st.session_state.df_dados = None
 
-    # Botão para Inicializar o Chat
     if st.button("🚀 Iniciar / Atualizar Chat", use_container_width=True, type="primary"):
         if not endpoint or not api_key or not modelo:
             st.error("Preencha Endpoint, API Key e Nome do Modelo.")
         else:
-            # Salva credenciais na sessão
             st.session_state.saved_endpoint = endpoint
             st.session_state.saved_key = api_key
             st.session_state.saved_model = modelo
@@ -115,47 +119,143 @@ with st.sidebar:
             st.session_state.chat_iniciado = True
             st.rerun()
 
-    # Botão Novo Chat: preserva credenciais, limpa histórico
     if st.session_state.chat_iniciado:
         if st.button("🔄 Novo Chat", use_container_width=True):
             st.session_state.messages = []
             st.rerun()
 
 # ==========================================
-# PAINEL PRINCIPAL: Área do Chatbot
+# PAINEL PRINCIPAL: Dashboard e WhatsApp Chat
 # ==========================================
-st.subheader("🛠️ Suporte de TI — Central de Atendimento Inteligente")
+st.subheader("🛠️ Central de Atendimento & Analytics de TI")
 
-if not st.session_state.chat_iniciado:
-    st.info("👈 Preencha os parâmetros de conexão na barra lateral e clique em **'Iniciar / Atualizar Chat'** para começar.")
-else:
-    # Exibe o histórico de mensagens
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+# Layout Dividido: Esquerda (Dashboard/Cartões), Direita (Janela Flutuante WhatsApp)
+col_dashboard, col_chat = st.columns([1.2, 0.8], gap="medium")
 
-    # Entrada do Usuário
-    if prompt_usuario := st.chat_input("Descreva o incidente ou problema técnico..."):
-        # Adiciona e exibe mensagem do usuário
-        st.session_state.messages.append({"role": "user", "content": prompt_usuario})
-        with st.chat_message("user"):
-            st.markdown(prompt_usuario)
+with col_dashboard:
+    st.markdown("### 📊 Visão Geral dos Dados")
+    if st.session_state.df_dados is not None is not st.session_state.df_dados.empty:
+        df = st.session_state.df_dados
+        
+        # 1. Cartões de Resumo (KPIs)
+        total_linhas = len(df)
+        col_kpi1, col_kpi2 = st.columns(2)
+        col_kpi1.metric("Total de Registros / Serviços", total_linhas)
+        
+        # Tenta achar coluna de valor se existir para mostrar média/máxima
+        coluna_valor = None
+        for col in df.columns:
+            if any(term in col.lower() for term in ["valor", "preço", "custo", "r$"]):
+                coluna_valor = col
+                break
+        
+        if coluna_valor:
+            # Tenta extrair valores numéricos se forem strings formatadas
+            try:
+                # Exemplo: extrai números de strings como "150.00 - 300.00" pegando o limite superior ou inferior
+                valores_numericos = df[coluna_valor].astype(str).str.extract(r'(\d+[\d\.]*)')[0].astype(float)
+                media_val = valores_numericos.mean()
+                col_kpi2.metric("Média Estimada (Ref)", f"R$ {media_val:.2f}")
+            except Exception:
+                col_kpi2.metric("Col. Valores Detectada", coluna_valor)
+        else:
+            col_kpi2.metric("Colunas Identificadas", len(df.columns))
 
-        # Montagem do contexto do sistema com RAG (in-context injection)
-        system_instruction = st.session_state.persona
-        if st.session_state.conteudo_base:
-            system_instruction += (
-                f"\n\n--- DOCUMENTAÇÃO DE SUPORTE (RAG) ---\n"
-                f"{st.session_state.conteudo_base}\n"
-                f"--- FIM DA DOCUMENTAÇÃO ---"
-            )
+        st.markdown("---")
+        st.markdown("#### Gráficos Dinâmicos")
+        
+        # Tenta gerar gráficos automáticos baseados nas colunas disponíveis
+        if len(df.columns) >= 2:
+            # Gráfico de barras ou contagem dependendo do tipo de dado
+            col_cat = df.columns[1] if len(df.columns) > 1 else df.columns[0]
+            
+            # Gráfico interativo com Plotly adaptável
+            try:
+                fig = px.bar(df.head(10), x=df.columns[0], y=coluna_valor if coluna_valor else df.columns[1],
+                             title="Top Ocorrências / Valores por Serviço",
+                             labels={df.columns[0]: "Item", coluna_valor or df.columns[1]: "Métrica"})
+                fig.update_layout(margin=dict(l=20, r=20, t=30, b=20), height=320)
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception:
+                # Fallback para gráfico simples do Streamlit se plotly falhar
+                st.bar_chart(df.select_dtypes(include="number").head(10))
+        
+        with st.expander("🔍 Visualizar Tabela Completa de Dados"):
+            st.dataframe(df, use_container_width=True)
+    else:
+        st.info("💡 Envie um arquivo estruturado (como o CSV de problemas e valores gerado anteriormente) na barra lateral para gerar os cartões de resumo e gráficos automáticos.")
 
-        mensagens_api = [{"role": "system", "content": system_instruction}]
-        for m in st.session_state.messages:
-            mensagens_api.append({"role": m["role"], "content": m["content"]})
+with col_chat:
+    st.markdown("### 💬 Chat de Suporte")
+    
+    # CSS Customizado para simular o estilo de janela flutuante do WhatsApp
+    st.markdown("""
+    <style>
+    .whatsapp-container {
+        background-color: #efeae2;
+        border-radius: 15px;
+        padding: 15px;
+        height: 480px;
+        overflow-y: auto;
+        box-shadow: inset 0 0 10px rgba(0,0,0,0.1);
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        border: 1px solid #ddd;
+    }
+    .msg-user {
+        background-color: #dcf8c6;
+        color: #000;
+        padding: 10px 14px;
+        border-radius: 12px 12px 0 12px;
+        max-width: 80%;
+        align-self: flex-end;
+        box-shadow: 0 1px 1px rgba(0,0,0,0.1);
+        font-size: 14px;
+    }
+    .msg-assistant {
+        background-color: #ffffff;
+        color: #000;
+        padding: 10px 14px;
+        border-radius: 12px 12px 12px 0;
+        max-width: 80%;
+        align-self: flex-start;
+        box-shadow: 0 1px 1px rgba(0,0,0,0.1);
+        font-size: 14px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-        # Chamada ao Azure OpenAI
-        with st.chat_message("assistant"):
+    if not st.session_state.chat_iniciado:
+        st.warning("Inicie a sessão na barra lateral para conversar com o assistente.")
+    else:
+        # Container estilo chat WhatsApp simulado com HTML/Divs ou componentes nativos do Streamlit customizados
+        chat_container = st.container(height=450)
+        
+        with chat_container:
+            for msg in st.session_state.messages:
+                if msg["role"] == "user":
+                    st.markdown(f"<div style='text-align: right;'><span class='msg-user'><b>Você:</b><br>{msg['content']}</span></div>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<div style='text-align: left;'><span class='msg-assistant'><b>🛠️ Suporte TI:</b><br>{msg['content']}</span></div>", unsafe_allow_html=True)
+
+        # Entrada de texto fixa abaixo do chat
+        if prompt_usuario := st.chat_input("Digite sua dúvida de TI..."):
+            st.session_state.messages.append({"role": "user", "content": prompt_usuario})
+            
+            # Montagem do prompt com RAG
+            system_instruction = st.session_state.persona
+            if st.session_state.conteudo_base:
+                system_instruction += (
+                    f"\n\n--- DOCUMENTAÇÃO DE SUPORTE (RAG) ---\n"
+                    f"{st.session_state.conteudo_base}\n"
+                    f"--- FIM DA DOCUMENTAÇÃO ---"
+                )
+
+            mensagens_api = [{"role": "system", "content": system_instruction}]
+            for m in st.session_state.messages:
+                mensagens_api.append({"role": m["role"], "content": m["content"]})
+
             try:
                 client = AzureOpenAI(
                     azure_endpoint=st.session_state.saved_endpoint.strip(),
@@ -169,10 +269,8 @@ else:
                     temperature=0.2
                 )
                 resposta_ia = response.choices[0].message.content
-                st.markdown(resposta_ia)
-
-                # Salva a resposta no histórico da sessão
                 st.session_state.messages.append({"role": "assistant", "content": resposta_ia})
+                st.rerun()
 
             except Exception as erro:
                 st.error(f"Falha na comunicação com a Azure: {erro}")
