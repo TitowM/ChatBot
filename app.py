@@ -33,7 +33,6 @@ def extrair_texto_e_dados(uploaded_file):
     try:
         if nome.endswith(".txt"):
             texto_result = uploaded_file.read().decode("utf-8", errors="ignore")
-            # Tenta ler como tabela se houver separadores tabulados ou ponto e vírgula
             uploaded_file.seek(0)
             try:
                 df_result = pd.read_csv(uploaded_file, sep=None, engine="python")
@@ -129,20 +128,17 @@ with st.sidebar:
 # ==========================================
 st.subheader("🛠️ Central de Atendimento & Analytics de TI")
 
-# Layout Dividido: Esquerda (Dashboard/Cartões), Direita (Janela Flutuante WhatsApp)
 col_dashboard, col_chat = st.columns([1.2, 0.8], gap="medium")
 
 with col_dashboard:
     st.markdown("### 📊 Visão Geral dos Dados")
-    if st.session_state.df_dados is not None is not st.session_state.df_dados.empty:
+    if st.session_state.df_dados is not None and not st.session_state.df_dados.empty:
         df = st.session_state.df_dados
         
-        # 1. Cartões de Resumo (KPIs)
         total_linhas = len(df)
         col_kpi1, col_kpi2 = st.columns(2)
         col_kpi1.metric("Total de Registros / Serviços", total_linhas)
         
-        # Tenta achar coluna de valor se existir para mostrar média/máxima
         coluna_valor = None
         for col in df.columns:
             if any(term in col.lower() for term in ["valor", "preço", "custo", "r$"]):
@@ -150,9 +146,7 @@ with col_dashboard:
                 break
         
         if coluna_valor:
-            # Tenta extrair valores numéricos se forem strings formatadas
             try:
-                # Exemplo: extrai números de strings como "150.00 - 300.00" pegando o limite superior ou inferior
                 valores_numericos = df[coluna_valor].astype(str).str.extract(r'(\d+[\d\.]*)')[0].astype(float)
                 media_val = valores_numericos.mean()
                 col_kpi2.metric("Média Estimada (Ref)", f"R$ {media_val:.2f}")
@@ -164,64 +158,84 @@ with col_dashboard:
         st.markdown("---")
         st.markdown("#### Gráficos Dinâmicos")
         
-        # Tenta gerar gráficos automáticos baseados nas colunas disponíveis
         if len(df.columns) >= 2:
-            # Gráfico de barras ou contagem dependendo do tipo de dado
-            col_cat = df.columns[1] if len(df.columns) > 1 else df.columns[0]
-            
-            # Gráfico interativo com Plotly adaptável
             try:
-                fig = px.bar(df.head(10), x=df.columns[0], y=coluna_valor if coluna_valor else df.columns[1],
-                             title="Top Ocorrências / Valores por Serviço",
-                             labels={df.columns[0]: "Item", coluna_valor or df.columns[1]: "Métrica"})
+                fig = px.bar(
+                    df.head(10), 
+                    x=df.columns[0], 
+                    y=coluna_valor if coluna_valor else df.columns[1],
+                    title="Top Ocorrências / Valores por Serviço",
+                    labels={df.columns[0]: "Item", coluna_valor or df.columns[1]: "Métrica"}
+                )
                 fig.update_layout(margin=dict(l=20, r=20, t=30, b=20), height=320)
                 st.plotly_chart(fig, use_container_width=True)
             except Exception:
-                # Fallback para gráfico simples do Streamlit se plotly falhar
                 st.bar_chart(df.select_dtypes(include="number").head(10))
         
         with st.expander("🔍 Visualizar Tabela Completa de Dados"):
             st.dataframe(df, use_container_width=True)
     else:
-        st.info("💡 Envie um arquivo estruturado (como o CSV de problemas e valores gerado anteriormente) na barra lateral para gerar os cartões de resumo e gráficos automáticos.")
+        st.info("💡 Envie um arquivo estruturado (CSV) na barra lateral para gerar os cartões de resumo e gráficos automáticos.")
 
 with col_chat:
     st.markdown("### 💬 Chat de Suporte")
     
-    # CSS Customizado para simular o estilo de janela flutuante do WhatsApp
+    # CSS refinado imitando perfeitamente o visual e paleta de cores do WhatsApp Dark Mode
     st.markdown("""
     <style>
-    .whatsapp-container {
-        background-color: #efeae2;
-        border-radius: 15px;
-        padding: 15px;
+    .wa-chat-window {
+        background-color: #0b141a;
+        border-radius: 12px;
+        padding: 16px;
         height: 480px;
         overflow-y: auto;
-        box-shadow: inset 0 0 10px rgba(0,0,0,0.1);
+        border: 1px solid #222d34;
         display: flex;
         flex-direction: column;
-        gap: 10px;
-        border: 1px solid #ddd;
+        gap: 8px;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.4);
     }
-    .msg-user {
-        background-color: #dcf8c6;
-        color: #000;
-        padding: 10px 14px;
-        border-radius: 12px 12px 0 12px;
+    .wa-msg-bubble-user {
+        background-color: #005c4b;
+        color: #e9edef;
+        padding: 8px 12px;
+        border-radius: 8px 0px 8px 8px;
         max-width: 80%;
         align-self: flex-end;
-        box-shadow: 0 1px 1px rgba(0,0,0,0.1);
-        font-size: 14px;
+        margin-left: auto;
+        font-size: 13.5px;
+        line-height: 1.4;
+        word-break: break-word;
+        box-shadow: 0 1px 0.5px rgba(0,0,0,0.2);
     }
-    .msg-assistant {
-        background-color: #ffffff;
-        color: #000;
-        padding: 10px 14px;
-        border-radius: 12px 12px 12px 0;
+    .wa-msg-bubble-bot {
+        background-color: #202c33;
+        color: #e9edef;
+        padding: 8px 12px;
+        border-radius: 0px 8px 8px 8px;
         max-width: 80%;
         align-self: flex-start;
-        box-shadow: 0 1px 1px rgba(0,0,0,0.1);
-        font-size: 14px;
+        margin-right: auto;
+        font-size: 13.5px;
+        line-height: 1.4;
+        word-break: break-word;
+        box-shadow: 0 1px 0.5px rgba(0,0,0,0.2);
+    }
+    .wa-author-user {
+        font-size: 10px;
+        color: #53bdeb;
+        font-weight: 600;
+        text-align: right;
+        margin-bottom: 2px;
+        display: block;
+    }
+    .wa-author-bot {
+        font-size: 10px;
+        color: #00a884;
+        font-weight: 600;
+        text-align: left;
+        margin-bottom: 2px;
+        display: block;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -229,21 +243,34 @@ with col_chat:
     if not st.session_state.chat_iniciado:
         st.warning("Inicie a sessão na barra lateral para conversar com o assistente.")
     else:
-        # Container estilo chat WhatsApp simulado com HTML/Divs ou componentes nativos do Streamlit customizados
-        chat_container = st.container(height=450)
+        # Janela container de mensagens com rolagem limpa
+        chat_container = st.container(height=480)
         
         with chat_container:
+            st.markdown('<div class="wa-chat-window">', unsafe_allow_html=True)
             for msg in st.session_state.messages:
                 if msg["role"] == "user":
-                    st.markdown(f"<div style='text-align: right;'><span class='msg-user'><b>Você:</b><br>{msg['content']}</span></div>", unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="wa-msg-bubble-user">'
+                        f'<span class="wa-author-user">Você</span>'
+                        f'{msg["content"]}'
+                        f'</div>', 
+                        unsafe_allow_html=True
+                    )
                 else:
-                    st.markdown(f"<div style='text-align: left;'><span class='msg-assistant'><b>🛠️ Suporte TI:</b><br>{msg['content']}</span></div>", unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="wa-msg-bubble-bot">'
+                        f'<span class="wa-author-bot">🛠️ Suporte TI</span>'
+                        f'{msg["content"]}'
+                        f'</div>', 
+                        unsafe_allow_html=True
+                    )
+            st.markdown('</div>', unsafe_allow_html=True)
 
-        # Entrada de texto fixa abaixo do chat
+        # Entrada de prompt na parte inferior idêntica ao campo de digitação
         if prompt_usuario := st.chat_input("Digite sua dúvida de TI..."):
             st.session_state.messages.append({"role": "user", "content": prompt_usuario})
             
-            # Montagem do prompt com RAG
             system_instruction = st.session_state.persona
             if st.session_state.conteudo_base:
                 system_instruction += (
