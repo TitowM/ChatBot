@@ -1,5 +1,5 @@
-streamlit
-openai
-pypdf
-pandas
-plotly
+streamlit>=1.30.0
+pandas>=2.0.0
+pypdf>=3.17.0
+openai>=1.0.0
+plotly>=5.18.0
